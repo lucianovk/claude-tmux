@@ -1,147 +1,148 @@
 #!/usr/bin/env bash
-# Gerencia sessões do Claude Code dentro do tmux, para qualquer projeto.
+# Manage Claude Code sessions inside tmux, for any project.
 #
-# Uso:
-#   claude-tmux iniciar     [NOME]  inicia o Claude no tmux e conecta
-#   claude-tmux desconectar [NOME]  sai do tmux sem fechar o Claude
-#   claude-tmux conectar    [NOME]  volta à sessão tmux
-#   claude-tmux encerrar    [NOME]  fecha a sessão tmux e o Claude
-#   claude-tmux estado      [NOME]  mostra se a sessão está ativa
-#   claude-tmux lista               lista as sessões tmux
-#   claude-tmux conversas           lista as conversas com nome e a pasta de cada uma
+# Usage:
+#   claude-tmux start  [NAME]  start Claude in tmux and attach
+#   claude-tmux detach [NAME]  leave tmux; Claude keeps running
+#   claude-tmux attach [NAME]  go back to the tmux session
+#   claude-tmux stop   [NAME]  close the tmux session and Claude
+#   claude-tmux status [NAME]  show whether the session is running
+#   claude-tmux list           list tmux sessions
+#   claude-tmux conversations  list named conversations and their folders
 #
-# Cada pasta é um projeto. "iniciar NOME" abre o tmux na pasta do projeto
-# e pode ser chamado de qualquer lugar. NOME pode ser, nesta ordem:
-#   - o nome de uma conversa (/rename ou --name): retoma essa conversa;
-#   - o ID de uma conversa: retoma essa conversa;
-#   - o nome de uma pasta onde você já usou o Claude: retoma a conversa
-#     mais recente dela;
-#   - o caminho de uma pasta (com "/"): idem, e serve para projeto novo.
-# Se houver nomes repetidos, usa o mais recente e avisa.
+# Each folder is a project. "start NAME" opens tmux in the project folder
+# and works from anywhere. NAME can be, in order of precedence:
+#   - a conversation name (/rename or --name): resumes that conversation;
+#   - a conversation ID: resumes that conversation;
+#   - the name of a folder where you have used Claude: resumes its most
+#     recent conversation;
+#   - a folder path (contains "/"): same, and also works for a new project.
+# When a name is ambiguous, the most recent match wins and a warning is shown.
 #
-# Sem NOME, "iniciar" usa a pasta atual e roda "claude --continue", que
-# retoma a conversa mais recente dessa pasta (ou abre uma nova). A sessão
-# tmux recebe o nome da pasta. Os outros comandos sem NOME também usam o
-# nome da pasta atual.
+# Without NAME, "start" uses the current folder and runs "claude --continue",
+# which resumes the folder's most recent conversation (or starts a new one).
+# The tmux session is named after the folder. The other commands without
+# NAME also use the current folder's name.
 #
-# Variável opcional:
-#   CLAUDE_TMUX_DIR  força a pasta de trabalho do "iniciar"
+# Optional variable:
+#   CLAUDE_TMUX_DIR  force the working folder used by "start"
 
 set -euo pipefail
 
-PROJETOS="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects"
+PROJECTS="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects"
 
-ACAO="${1:-}"
-CONVERSA="${2:-}"
+ACTION="${1:-}"
+TARGET="${2:-}"
 
-# O tmux não aceita "." nem ":" em nomes de sessão.
-nome_tmux() { local n="$1"; printf '%s' "${n//[.:]/_}"; }
+# tmux does not accept "." or ":" in session names.
+tmux_name() { local n="$1"; printf '%s' "${n//[.:]/_}"; }
 
-if [[ "$CONVERSA" == */* || "$CONVERSA" == . || "$CONVERSA" == .. ]]; then
-    NOME="$(nome_tmux "$(basename "$(realpath -m "$CONVERSA")")")"   # caminho: usa o nome da pasta
-elif [[ -n "$CONVERSA" ]]; then
-    NOME="$(nome_tmux "$CONVERSA")"
+if [[ "$TARGET" == */* || "$TARGET" == . || "$TARGET" == .. ]]; then
+    NAME="$(tmux_name "$(basename "$(realpath -m "$TARGET")")")"   # path: use the folder name
+elif [[ -n "$TARGET" ]]; then
+    NAME="$(tmux_name "$TARGET")"
 else
-    NOME="$(nome_tmux "$(basename "$PWD")")"
+    NAME="$(tmux_name "$(basename "$PWD")")"
 fi
 
-existe() { tmux has-session -t "=$NOME" 2>/dev/null; }
-exige()  { existe || { echo "A sessão '$NOME' não existe." >&2; exit 1; }; }
+exists()  { tmux has-session -t "=$NAME" 2>/dev/null; }
+require() { exists || { echo "Session '$NAME' does not exist." >&2; exit 1; }; }
 
-conectar() {
+attach() {
     if [[ -n "${TMUX:-}" ]]; then
-        tmux switch-client -t "=$NOME"
+        tmux switch-client -t "=$NAME"
     else
-        tmux attach-session -t "=$NOME"
+        tmux attach-session -t "=$NAME"
     fi
 }
 
-uso() { sed -n '2,/^$/p' "$0" | sed -n 's/^# \{0,1\}//p'; exit "${1:-0}"; }
+usage() { sed -n '2,/^$/p' "$0" | sed -n 's/^# \{0,1\}//p'; exit "${1:-0}"; }
 
-# Lê os históricos do Claude. Com "listar", imprime todas as conversas com
-# nome; com um NOME ou ID, imprime "ID<tab>PASTA" da conversa correspondente.
-conversas() {
-    python3 -I - "$PROJETOS" "$@" <<'PY'
+# Read Claude Code's history. With --list, print every named conversation;
+# with a NAME, ID or path, print "ID<tab>FOLDER" ("continue" instead of an ID
+# when the most recent conversation of the folder should be resumed).
+conversations() {
+    python3 -I - "$PROJECTS" "$@" <<'PY'
 import json, os, re, sys
 from glob import glob
 
-base, pedido = sys.argv[1], sys.argv[2]
+base, query = sys.argv[1], sys.argv[2]
 uuid = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
 
-def ler(arq):
-    titulo = pasta = None
-    with open(arq, encoding='utf-8', errors='replace') as f:
-        for linha in f:
-            if '"customTitle"' not in linha and (pasta or '"cwd"' not in linha):
+def read(path):
+    title = folder = None
+    with open(path, encoding='utf-8', errors='replace') as f:
+        for line in f:
+            if '"customTitle"' not in line and (folder or '"cwd"' not in line):
                 continue
             try:
-                d = json.loads(linha)
+                d = json.loads(line)
             except ValueError:
                 continue
             if d.get('type') == 'custom-title':
-                titulo = d.get('customTitle')      # vale o último /rename
-            if pasta is None and d.get('cwd'):
-                pasta = d['cwd']                   # pasta onde a conversa começou
-    return titulo, pasta
+                title = d.get('customTitle')      # the last /rename wins
+            if folder is None and d.get('cwd'):
+                folder = d['cwd']                 # folder where the conversation started
+    return title, folder
 
-arqs = sorted(glob(os.path.join(base, '*', '*.jsonl')), key=os.path.getmtime, reverse=True)
+files = sorted(glob(os.path.join(base, '*', '*.jsonl')), key=os.path.getmtime, reverse=True)
 
-if pedido == 'listar':
-    for a in arqs:
-        t, p = ler(a)
+if query == '--list':
+    for f in files:
+        t, p = read(f)
         if t:
-            print(f"{t}\t{p or '?'}\t{os.path.basename(a)[:-6]}")
+            print(f"{t}\t{p or '?'}\t{os.path.basename(f)[:-6]}")
     sys.exit(0)
 
-# Caminho de uma pasta: retoma a conversa mais recente dela (ou abre uma nova).
-if '/' in pedido or pedido in ('.', '..'):
-    pasta = os.path.realpath(os.path.expanduser(pedido))
-    if not os.path.isdir(pasta):
-        sys.exit(f"A pasta '{pedido}' não existe.")
-    print(f"continue\t{pasta}")
+# Folder path: resume its most recent conversation (or start a new one).
+if '/' in query or query in ('.', '..'):
+    folder = os.path.realpath(os.path.expanduser(query))
+    if not os.path.isdir(folder):
+        sys.exit(f"Folder '{query}' does not exist.")
+    print(f"continue\t{folder}")
     sys.exit(0)
 
-achados, projetos = [], []
-for a in arqs:
-    sid = os.path.basename(a)[:-6]
-    if uuid.match(pedido):
-        if sid == pedido:
-            achados.append((sid, ler(a)[1]))
+matches, projects = [], []
+for f in files:
+    sid = os.path.basename(f)[:-6]
+    if uuid.match(query):
+        if sid == query:
+            matches.append((sid, read(f)[1]))
             break
         continue
-    t, p = ler(a)
-    if t == pedido:
-        achados.append((sid, p))
-    elif p and os.path.basename(p.rstrip('/')) == pedido and p not in projetos:
-        projetos.append(p)                     # do mais recente ao mais antigo
+    t, p = read(f)
+    if t == query:
+        matches.append((sid, p))
+    elif p and os.path.basename(p.rstrip('/')) == query and p not in projects:
+        projects.append(p)                       # most recent first
 
-if achados:
-    if len(achados) > 1:
-        print(f"Aviso: {len(achados)} conversas se chamam '{pedido}'; usando a mais recente.",
+if matches:
+    if len(matches) > 1:
+        print(f"Warning: {len(matches)} conversations are named '{query}'; using the most recent.",
               file=sys.stderr)
-    sid, pasta = achados[0]
-elif projetos:
-    if len(projetos) > 1:
-        print(f"Aviso: {len(projetos)} pastas se chamam '{pedido}'; usando {projetos[0]}.",
+    sid, folder = matches[0]
+elif projects:
+    if len(projects) > 1:
+        print(f"Warning: {len(projects)} folders are named '{query}'; using {projects[0]}.",
               file=sys.stderr)
-    sid, pasta = 'continue', projetos[0]
+    sid, folder = 'continue', projects[0]
 else:
-    sys.exit(f"Nenhuma conversa nem pasta de projeto chamada '{pedido}'. "
-             f"Para um projeto novo, passe o caminho da pasta.")
+    sys.exit(f"No conversation or project folder named '{query}'. "
+             f"For a new project, pass the folder path.")
 
-if not os.path.isdir(pasta):
-    sys.exit(f"A pasta '{pasta}' não existe mais.")
-print(f"{sid}\t{pasta}")
+if not folder or not os.path.isdir(folder):
+    sys.exit(f"Folder '{folder}' no longer exists.")
+print(f"{sid}\t{folder}")
 PY
 }
 
-case "$ACAO" in
-    iniciar)
-        if existe; then
-            echo "A sessão '$NOME' já existe; conectando."
+case "$ACTION" in
+    start|iniciar)
+        if exists; then
+            echo "Session '$NAME' already exists; attaching."
         else
-            if [[ -n "$CONVERSA" ]]; then
-                IFS=$'\t' read -r ID DIR < <(conversas "$CONVERSA") || exit 1
+            if [[ -n "$TARGET" ]]; then
+                IFS=$'\t' read -r ID DIR < <(conversations "$TARGET") || exit 1
                 DIR="${CLAUDE_TMUX_DIR:-$DIR}"
                 if [[ "$ID" == continue ]]; then
                     cmd="claude --continue"
@@ -152,40 +153,40 @@ case "$ACAO" in
                 DIR="${CLAUDE_TMUX_DIR:-$PWD}"
                 cmd="claude --continue"
             fi
-            tmux new-session -d -s "$NOME" -c "$DIR" "$cmd"
-            echo "Sessão '$NOME' criada em $DIR ($cmd)."
+            tmux new-session -d -s "$NAME" -c "$DIR" "$cmd"
+            echo "Session '$NAME' created in $DIR ($cmd)."
         fi
-        conectar
+        attach
         ;;
-    desconectar)
-        exige
-        tmux detach-client -s "=$NOME"
-        echo "Desconectado; o Claude continua rodando em '$NOME'."
+    detach|desconectar)
+        require
+        tmux detach-client -s "=$NAME"
+        echo "Detached; Claude keeps running in '$NAME'."
         ;;
-    conectar)
-        exige
-        conectar
+    attach|conectar)
+        require
+        attach
         ;;
-    encerrar)
-        exige
-        tmux kill-session -t "=$NOME"
-        echo "Sessão '$NOME' encerrada."
+    stop|encerrar)
+        require
+        tmux kill-session -t "=$NAME"
+        echo "Session '$NAME' closed."
         ;;
-    estado)
-        if existe; then
-            tmux list-sessions -F '#{session_name}: #{session_windows} janela(s), #{?session_attached,conectada,desconectada}' \
-                | command grep -F "$NOME:"
+    status|estado)
+        if exists; then
+            tmux list-sessions -F '#{session_name}: #{session_windows} window(s), #{?session_attached,attached,detached}' \
+                | command grep -F "$NAME:"
         else
-            echo "A sessão '$NOME' não existe."
+            echo "Session '$NAME' does not exist."
         fi
         ;;
-    lista)
-        tmux list-sessions -F '#{session_name}: #{?session_attached,conectada,desconectada}' 2>/dev/null \
-            || echo "Nenhuma sessão tmux ativa."
+    list|lista)
+        tmux list-sessions -F '#{session_name}: #{?session_attached,attached,detached}' 2>/dev/null \
+            || echo "No tmux sessions running."
         ;;
-    conversas)
-        conversas listar | column -t -s $'\t'
+    conversations|conversas)
+        conversations --list | column -t -s $'\t'
         ;;
-    -h|--help|ajuda) uso 0 ;;
-    *) uso 1 ;;
+    -h|--help|help) usage 0 ;;
+    *) usage 1 ;;
 esac

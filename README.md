@@ -1,80 +1,80 @@
 # claude-tmux
 
-O `claude-tmux` abre conversas do [Claude Code](https://docs.claude.com/en/docs/claude-code) dentro do tmux. Assim o Claude continua trabalhando quando você fecha o terminal ou perde a conexão SSH, e você volta à conversa depois, de qualquer pasta, pelo nome que deu a ela.
+`claude-tmux` runs [Claude Code](https://docs.claude.com/en/docs/claude-code) conversations inside tmux. Claude keeps working when you close the terminal or lose your SSH connection, and you can return to a conversation later, from any folder, by its name.
 
-## Por que usar
+## Why
 
-O `claude-tmux` parte de uma regra simples: cada pasta é um projeto em que você trabalha com o Claude. Você chama o projeto ou a conversa pelo nome, de qualquer lugar, e o script abre o tmux na pasta certa.
+`claude-tmux` follows one simple rule: each folder is a project you work on with Claude. You refer to the project or the conversation by name, from anywhere, and the script opens tmux in the right folder.
 
-Isso é útil porque o `claude --resume` só encontra uma conversa quando você está na pasta em que ela foi criada. O `claude-tmux` lê o histórico do Claude Code em `~/.claude/projects`, descobre essa pasta, abre o tmux nela e retoma a conversa.
+This helps because `claude --resume` only finds a conversation when you are in the folder where it was created. `claude-tmux` reads Claude Code's history in `~/.claude/projects`, finds that folder, opens tmux there and resumes the conversation.
 
-## Requisitos
+## Requirements
 
 - bash
 - tmux
-- python3 (só a biblioteca padrão)
+- python3 (standard library only)
 - Claude Code (`claude`)
 
-## Instalação
+## Installation
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/lucianovk/claude-tmux/main/claude-tmux -o ~/.local/bin/claude-tmux
 chmod +x ~/.local/bin/claude-tmux
 ```
 
-Qualquer pasta que esteja no `PATH` serve no lugar de `~/.local/bin`.
+Any folder on your `PATH` works in place of `~/.local/bin`.
 
-## Uso
+## Usage
 
-Você pode chamar um projeto pelo nome da pasta, ou dar um nome a uma conversa dentro do Claude Code com `/rename NOME` (ou `claude --name NOME`). Depois:
+Refer to a project by its folder name, or name a conversation inside Claude Code with `/rename NAME` (or start it with `claude --name NAME`). Then:
 
-| Comando | O que faz |
+| Command | What it does |
 |---|---|
-| `claude-tmux iniciar [NOME]` | abre a conversa no tmux e conecta |
-| `claude-tmux desconectar [NOME]` | sai do tmux; o Claude continua rodando |
-| `claude-tmux conectar [NOME]` | volta à sessão tmux |
-| `claude-tmux encerrar [NOME]` | fecha a sessão tmux e o Claude |
-| `claude-tmux estado [NOME]` | diz se a sessão existe e se está conectada |
-| `claude-tmux lista` | lista as sessões tmux |
-| `claude-tmux conversas` | lista as conversas com nome, a pasta e o ID de cada uma |
+| `claude-tmux start [NAME]` | opens the conversation in tmux and attaches |
+| `claude-tmux detach [NAME]` | leaves tmux; Claude keeps running |
+| `claude-tmux attach [NAME]` | goes back to the tmux session |
+| `claude-tmux stop [NAME]` | closes the tmux session and Claude |
+| `claude-tmux status [NAME]` | shows whether the session exists and is attached |
+| `claude-tmux list` | lists tmux sessions |
+| `claude-tmux conversations` | lists named conversations with their folder and ID |
 
-NOME pode ser, nesta ordem de preferência:
+NAME can be, in order of precedence:
 
-| NOME | O que `iniciar` faz |
+| NAME | What `start` does |
 |---|---|
-| nome de uma conversa (`/rename` ou `--name`) | retoma essa conversa |
-| ID de uma conversa | retoma essa conversa |
-| nome de uma pasta onde você já usou o Claude | retoma a conversa mais recente dessa pasta |
-| caminho de uma pasta (com `/`) | o mesmo; serve também para um projeto sem conversas |
+| a conversation name (`/rename` or `--name`) | resumes that conversation |
+| a conversation ID | resumes that conversation |
+| the name of a folder where you have used Claude | resumes that folder's most recent conversation |
+| a folder path (contains `/`) | the same; also works for a project with no conversations yet |
 
-A sessão tmux recebe o NOME, ou o nome da pasta quando NOME é um caminho. Se houver nomes repetidos, o script usa o mais recente e avisa; para escolher outra conversa, passe o ID.
+The tmux session takes NAME, or the folder name when NAME is a path. When a name is ambiguous, the script uses the most recent match and prints a warning; pass the ID to pick another conversation.
 
-Sem NOME, `iniciar` usa a pasta atual e roda `claude --continue`, que retoma a conversa mais recente dessa pasta ou abre uma nova. Nesse caso a sessão tmux recebe o nome da pasta.
+Without NAME, `start` uses the current folder and runs `claude --continue`, which resumes the folder's most recent conversation or starts a new one. The tmux session is then named after the folder.
 
-Dentro do tmux, Ctrl+B seguido de D também desconecta.
+Inside tmux, Ctrl+B followed by D also detaches.
 
-### Exemplo
+### Example
 
 ```bash
-claude-tmux iniciar ~/projetos/analise   # projeto novo: abre o Claude no tmux
-# Ctrl+B, D para sair; o Claude continua rodando
-claude-tmux conectar analise             # volta à sessão
-claude-tmux encerrar analise             # fecha tudo
-claude-tmux iniciar analise              # outro dia, de qualquer pasta: retoma a última conversa
+claude-tmux start ~/projects/analysis   # new project: opens Claude in tmux
+# Ctrl+B, D to leave; Claude keeps running
+claude-tmux attach analysis             # back to the session
+claude-tmux stop analysis               # close everything
+claude-tmux start analysis              # another day, from any folder: resumes the last conversation
 ```
 
-## Cuidados
+## Caveats
 
-- Feche a conversa antes de retomá-la no tmux. Se a mesma conversa ficar aberta em dois processos, os dois gravam no mesmo histórico.
-- O script depende do formato interno do histórico do Claude Code (arquivos `.jsonl` em `~/.claude/projects`), que pode mudar em versões futuras.
+- Close a conversation before resuming it in tmux. If the same conversation is open in two processes, both write to the same history.
+- The script relies on Claude Code's internal history format (`.jsonl` files in `~/.claude/projects`), which may change in future versions.
 
-## Variáveis
+## Environment variables
 
-| Variável | Efeito |
+| Variable | Effect |
 |---|---|
-| `CLAUDE_TMUX_DIR` | força a pasta de trabalho do `iniciar` |
-| `CLAUDE_CONFIG_DIR` | pasta de configuração do Claude Code (padrão: `~/.claude`) |
+| `CLAUDE_TMUX_DIR` | forces the working folder used by `start` |
+| `CLAUDE_CONFIG_DIR` | Claude Code's configuration folder (default: `~/.claude`) |
 
-## Licença
+## License
 
-MIT. Este é um projeto pessoal, sem relação com a Anthropic.
+MIT. This is a personal project, not affiliated with Anthropic.
