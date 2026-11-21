@@ -10,10 +10,14 @@
 #   claude-tmux lista               lista as sessões tmux
 #   claude-tmux conversas           lista as conversas com nome e a pasta de cada uma
 #
-# NOME é o nome dado à conversa com /rename (ou --name), ou o ID dela.
-# "iniciar NOME" acha a pasta onde a conversa foi criada, abre o tmux nela
-# e roda "claude --resume ID". Pode ser chamado de qualquer pasta. Se duas
-# conversas tiverem o mesmo nome, usa a mais recente e avisa.
+# Cada pasta é um projeto. "iniciar NOME" abre o tmux na pasta do projeto
+# e pode ser chamado de qualquer lugar. NOME pode ser, nesta ordem:
+#   - o nome de uma conversa (/rename ou --name): retoma essa conversa;
+#   - o ID de uma conversa: retoma essa conversa;
+#   - o nome de uma pasta onde você já usou o Claude: retoma a conversa
+#     mais recente dela;
+#   - o caminho de uma pasta (com "/"): idem, e serve para projeto novo.
+# Se houver nomes repetidos, usa o mais recente e avisa.
 #
 # Sem NOME, "iniciar" usa a pasta atual e roda "claude --continue", que
 # retoma a conversa mais recente dessa pasta (ou abre uma nova). A sessão
@@ -33,7 +37,9 @@ CONVERSA="${2:-}"
 # O tmux não aceita "." nem ":" em nomes de sessão.
 nome_tmux() { local n="$1"; printf '%s' "${n//[.:]/_}"; }
 
-if [[ -n "$CONVERSA" ]]; then
+if [[ "$CONVERSA" == */* || "$CONVERSA" == . || "$CONVERSA" == .. ]]; then
+    NOME="$(nome_tmux "$(basename "$(realpath -m "$CONVERSA")")")"   # caminho: usa o nome da pasta
+elif [[ -n "$CONVERSA" ]]; then
     NOME="$(nome_tmux "$CONVERSA")"
 else
     NOME="$(nome_tmux "$(basename "$PWD")")"
@@ -50,7 +56,7 @@ conectar() {
     fi
 }
 
-uso() { sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+uso() { sed -n '2,/^$/p' "$0" | sed -n 's/^# \{0,1\}//p'; exit "${1:-0}"; }
 
 # Lê os históricos do Claude. Com "listar", imprime todas as conversas com
 # nome; com um NOME ou ID, imprime "ID<tab>PASTA" da conversa correspondente.
@@ -87,7 +93,15 @@ if pedido == 'listar':
             print(f"{t}\t{p or '?'}\t{os.path.basename(a)[:-6]}")
     sys.exit(0)
 
-achados = []
+# Caminho de uma pasta: retoma a conversa mais recente dela (ou abre uma nova).
+if '/' in pedido or pedido in ('.', '..'):
+    pasta = os.path.realpath(os.path.expanduser(pedido))
+    if not os.path.isdir(pasta):
+        sys.exit(f"A pasta '{pedido}' não existe.")
+    print(f"continue\t{pasta}")
+    sys.exit(0)
+
+achados, projetos = [], []
 for a in arqs:
     sid = os.path.basename(a)[:-6]
     if uuid.match(pedido):
@@ -98,15 +112,25 @@ for a in arqs:
     t, p = ler(a)
     if t == pedido:
         achados.append((sid, p))
+    elif p and os.path.basename(p.rstrip('/')) == pedido and p not in projetos:
+        projetos.append(p)                     # do mais recente ao mais antigo
 
-if not achados:
-    sys.exit(f"Nenhuma conversa chamada '{pedido}' em {base}.")
-if len(achados) > 1:
-    print(f"Aviso: {len(achados)} conversas se chamam '{pedido}'; usando a mais recente.",
-          file=sys.stderr)
-sid, pasta = achados[0]
-if not pasta or not os.path.isdir(pasta):
-    sys.exit(f"A pasta da conversa '{pedido}' não existe mais: {pasta}")
+if achados:
+    if len(achados) > 1:
+        print(f"Aviso: {len(achados)} conversas se chamam '{pedido}'; usando a mais recente.",
+              file=sys.stderr)
+    sid, pasta = achados[0]
+elif projetos:
+    if len(projetos) > 1:
+        print(f"Aviso: {len(projetos)} pastas se chamam '{pedido}'; usando {projetos[0]}.",
+              file=sys.stderr)
+    sid, pasta = 'continue', projetos[0]
+else:
+    sys.exit(f"Nenhuma conversa nem pasta de projeto chamada '{pedido}'. "
+             f"Para um projeto novo, passe o caminho da pasta.")
+
+if not os.path.isdir(pasta):
+    sys.exit(f"A pasta '{pasta}' não existe mais.")
 print(f"{sid}\t{pasta}")
 PY
 }
@@ -119,7 +143,11 @@ case "$ACAO" in
             if [[ -n "$CONVERSA" ]]; then
                 IFS=$'\t' read -r ID DIR < <(conversas "$CONVERSA") || exit 1
                 DIR="${CLAUDE_TMUX_DIR:-$DIR}"
-                cmd="claude --resume $ID"
+                if [[ "$ID" == continue ]]; then
+                    cmd="claude --continue"
+                else
+                    cmd="claude --resume $ID"
+                fi
             else
                 DIR="${CLAUDE_TMUX_DIR:-$PWD}"
                 cmd="claude --continue"

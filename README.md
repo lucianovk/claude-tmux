@@ -4,7 +4,9 @@ O `claude-tmux` abre conversas do [Claude Code](https://docs.claude.com/en/docs/
 
 ## Por que usar
 
-O `claude --resume` só encontra uma conversa quando você está na pasta em que ela foi criada. O `claude-tmux` lê o histórico do Claude Code em `~/.claude/projects`, descobre essa pasta, abre o tmux nela e retoma a conversa. A sessão tmux recebe o mesmo nome da conversa.
+O `claude-tmux` parte de uma regra simples: cada pasta é um projeto em que você trabalha com o Claude. Você chama o projeto ou a conversa pelo nome, de qualquer lugar, e o script abre o tmux na pasta certa.
+
+Isso é útil porque o `claude --resume` só encontra uma conversa quando você está na pasta em que ela foi criada. O `claude-tmux` lê o histórico do Claude Code em `~/.claude/projects`, descobre essa pasta, abre o tmux nela e retoma a conversa.
 
 ## Requisitos
 
@@ -24,7 +26,7 @@ Qualquer pasta que esteja no `PATH` serve no lugar de `~/.local/bin`.
 
 ## Uso
 
-Dê um nome à conversa dentro do Claude Code com `/rename NOME`, ou inicie-o com `claude --name NOME`. Depois:
+Você pode chamar um projeto pelo nome da pasta, ou dar um nome a uma conversa dentro do Claude Code com `/rename NOME` (ou `claude --name NOME`). Depois:
 
 | Comando | O que faz |
 |---|---|
@@ -36,7 +38,16 @@ Dê um nome à conversa dentro do Claude Code com `/rename NOME`, ou inicie-o co
 | `claude-tmux lista` | lista as sessões tmux |
 | `claude-tmux conversas` | lista as conversas com nome, a pasta e o ID de cada uma |
 
-NOME pode ser o nome da conversa ou o ID dela. Se duas conversas tiverem o mesmo nome, o script usa a mais recente e avisa; para escolher outra, passe o ID.
+NOME pode ser, nesta ordem de preferência:
+
+| NOME | O que `iniciar` faz |
+|---|---|
+| nome de uma conversa (`/rename` ou `--name`) | retoma essa conversa |
+| ID de uma conversa | retoma essa conversa |
+| nome de uma pasta onde você já usou o Claude | retoma a conversa mais recente dessa pasta |
+| caminho de uma pasta (com `/`) | o mesmo; serve também para um projeto sem conversas |
+
+A sessão tmux recebe o NOME, ou o nome da pasta quando NOME é um caminho. Se houver nomes repetidos, o script usa o mais recente e avisa; para escolher outra conversa, passe o ID.
 
 Sem NOME, `iniciar` usa a pasta atual e roda `claude --continue`, que retoma a conversa mais recente dessa pasta ou abre uma nova. Nesse caso a sessão tmux recebe o nome da pasta.
 
@@ -45,11 +56,11 @@ Dentro do tmux, Ctrl+B seguido de D também desconecta.
 ### Exemplo
 
 ```bash
-cd ~/projetos/analise
-claude --name analise        # trabalha um pouco e sai
-claude-tmux iniciar analise  # de qualquer pasta: retoma no tmux
+claude-tmux iniciar ~/projetos/analise   # projeto novo: abre o Claude no tmux
 # Ctrl+B, D para sair; o Claude continua rodando
-claude-tmux conectar analise
+claude-tmux conectar analise             # volta à sessão
+claude-tmux encerrar analise             # fecha tudo
+claude-tmux iniciar analise              # outro dia, de qualquer pasta: retoma a última conversa
 ```
 
 ## Cuidados
